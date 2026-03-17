@@ -10,23 +10,34 @@ In document amendment workflows (legal redlining, contract editing), an LLM must
 
 ### Summary Table
 
-| Model | Context Window | 100% Recall Threshold | Notes |
-|-------|:-------------:|:--------------------:|-------|
-| Opus 4.6 | 1M tokens | **333K tokens** confirmed, breakpoint 333K-454K | At 454K, sporadic section failures (RLHF meta-commentary) |
-| Sonnet 4.6 | 200K tokens* | **122K tokens** confirmed | Perfect recall across entire testable range. *1M gated behind feature flag `coral_reef_sonnet` |
-| Haiku 4.5 | 200K tokens | **42K tokens** confirmed | Degrades to 95-99% at 62-83K tokens |
+| Model | Context Window | 100% Recall Threshold | Breakpoint | Notes |
+|-------|:-------------:|:--------------------:|:----------:|-------|
+| **Opus 4.6** | 1M tokens | **333K tokens** | 333K-394K tokens | At 394K+, RLHF meta-commentary replaces output on ~60-70% of sections |
+| **Sonnet 4.6** | 200K tokens* | **122K tokens** | Context limit | Perfect recall within testable range. *1M gated behind `coral_reef_sonnet` feature flag |
+| **Haiku 4.5** | 200K tokens | **42K tokens** | 62K tokens | Degrades to 95-99% above threshold |
 
 ### Opus 4.6 Results (v2, hash markers, 500-line sections)
 
-| Doc | Input Tokens | Sections | Overall Word Acc |
-|-----|:-----------:|:--------:|:----------------:|
-| 10k | 8,492 | 1 | **100%** |
-| 25k | 20,933 | 1 | **100%** |
-| 50k | 41,681 | 1 | **100%** |
-| 100k | 83,360 | 2 | **100%** |
-| 400k | 333,052 | 8 | **100%** |
-| 450k_tok | ~454,000 | 11 | Partial (section 2 failed with meta-commentary) |
-| 600k_tok | 602,499 | 15 | Partial (section 0 truncated, secs 1-8 perfect) |
+| Doc | Input Tokens | Sections | Perfect/Total | Overall |
+|-----|:-----------:|:--------:|:-------------:|:-------:|
+| 10k | 8,492 | 1 | 1/1 | **100%** |
+| 25k | 20,933 | 1 | 1/1 | **100%** |
+| 50k | 41,681 | 1 | 1/1 | **100%** |
+| 100k | 83,360 | 2 | 2/2 | **100%** |
+| 400k | 333,052 | 8 | 8/8 | **100%** |
+| 390k_tok | ~394,000 | 10 | 1/3 (in progress) | Failing — secs 1,2 failed |
+| 450k_tok | ~454,000 | 11 | 4/11 | **36%** sections pass |
+| 600k_tok | 602,499 | 15 | 8/9 (partial run) | sec 0 fails, secs 1-8 perfect |
+
+### Opus Failure Analysis at 454K Tokens
+
+At 454K input tokens (450k_tok document, 11 sections):
+
+- **4/11 sections perfect** (sections 0, 1, 3, 8), **6/11 failed** with RLHF meta-commentary, **1 "Prompt too long"**
+- Failures are **NOT position-dependent**: sections 2, 4, 5, 6, 7, 9 failed but sections 0, 1, 3, 8 passed
+- The model produces meta-commentary like "I'm unable to write the file" or "this section is too large to output"
+- This is **RLHF training interference, not recall failure** — the model CAN attend to the content but refuses to output it
+- When the model does produce output, it is always verbatim correct
 
 ### Sonnet 4.6 Results (v2, hash markers, 250-line sections)
 
@@ -38,6 +49,14 @@ In document amendment workflows (legal redlining, contract editing), an LLM must
 | 75k | 62,431 | 3 | **100%** |
 | 100k | 83,360 | 4 | 99.94% |
 | 120k_tok | ~122,000 | 6 | **100%** |
+
+### Sonnet Context Window Discovery
+
+Claude Code source shows Sonnet 4.6 gets 1M context via feature flag `coral_reef_sonnet`:
+- `TnA()` -> `u2L()` -> `nK9("coral_reef_sonnet") === "true"` gates 1M access
+- Currently falls back to 200K (`oiA=200000`) when the flag is not set
+- The `claude -p` CLI blocks requests **client-side** (`api_ms=0`) above ~147K doc tokens for Sonnet
+- Within the testable range (up to 122K tokens), Sonnet shows **no recall degradation** — only hard context cutoffs
 
 ### Haiku 4.5 Results (v2, hash markers)
 
@@ -55,9 +74,9 @@ In document amendment workflows (legal redlining, contract editing), an LLM must
 
 2. **Recall itself shows no gradual degradation.** Within the context window, all models achieve 100% word accuracy. Failures are either hard context overflows (Sonnet/Haiku) or RLHF-trained output reluctance (Opus at high context).
 
-3. **Opus failures at 450K+ tokens are RLHF interference, not recall failures.** The model outputs meta-commentary ("I need permission to write a file") instead of document text. The content it does produce is always verbatim.
+3. **Opus failures at 394K+ tokens are RLHF interference, not recall failures.** The model outputs meta-commentary ("I'm unable to write the file", "this section is too large to output") instead of document text. The content it does produce is always verbatim. Failures are not position-dependent — scattered sections fail while others pass.
 
-4. **Sonnet 4.6 has 1M context in code, gated behind feature flag.** Claude Code's source shows Sonnet 4.6 gets 1M via `TnA()` → `u2L()` → `nK9("coral_reef_sonnet") === "true"`. Currently falls back to 200K.
+4. **Sonnet 4.6 has 1M context in code, gated behind feature flag.** Claude Code's source shows Sonnet 4.6 gets 1M via `TnA()` -> `u2L()` -> `nK9("coral_reef_sonnet") === "true"`. Currently falls back to 200K (`oiA=200000`). The `claude -p` CLI blocks requests client-side (`api_ms=0`) above ~147K doc tokens.
 
 5. **Token counts: 4.83 chars/token** for this legal text (measured via API, remarkably stable across all sizes).
 
