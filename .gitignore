@@ -1,0 +1,4 @@
+recall_workdir/
+test_docs/*.txt
+*.sha256
+__pycache__/
